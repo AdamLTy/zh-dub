@@ -18,4 +18,5 @@ HF=$V/asr/bin/hf
 [ -f $VOL/index-tts/checkpoints/gpt.pth ] || $HF download IndexTeam/IndexTTS-2 --local-dir $VOL/index-tts/checkpoints
 $HF download nvidia/parakeet-tdt-0.6b-v2 >/dev/null
 $HF download tencent/Hunyuan-MT-7B >/dev/null
+$HF download Qwen/Qwen3-8B >/dev/null
 echo "setup ok (VOL=$VOL)"

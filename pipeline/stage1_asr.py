@@ -60,5 +60,6 @@ for url in urls:
         f=d/f"ref_{spk}.wav";sh("ffmpeg","-y","-i",str(d/"vocals.wav"),"-af",f"aselect='{sel}',asetpts=N/SR/TB","-t","15","-ac","1","-ar","24000",str(f))
         refs[spk]=str(f)
     dur=sf.info(str(d/"src44.wav")).duration
-    (d/"segments.json").write_text(json.dumps({"url":url,"duration":dur,"refs":refs,"segments":segs},ensure_ascii=False,indent=1))
+    vdur=float(subprocess.check_output(["ffprobe","-v","0","-show_entries","format=duration","-of","csv=p=0",str(d/"src.mp4")]))
+    (d/"segments.json").write_text(json.dumps({"url":url,"duration":dur,"video_duration":vdur,"refs":refs,"segments":segs},ensure_ascii=False,indent=1))
     print("stage1",vid,len(segs),"segs",len(refs),"speakers",flush=True)
