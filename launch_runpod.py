@@ -26,7 +26,7 @@ def terminate(pid):
     call("DELETE",f"/pods/{pid}");s.pop(pid);save(s);print("terminated own pod",pid)
 ap=argparse.ArgumentParser();ap.add_argument("urls",nargs="*");ap.add_argument("--out",default="./dub_out")
 ap.add_argument("--community",action="store_true");ap.add_argument("--keep",action="store_true");ap.add_argument("--cleanup",action="store_true")
-ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
+ap.add_argument("--mt",choices=["claude","hunyuan"]);ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
 ap.add_argument("--image",default="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04");A=ap.parse_args()
 if not os.getenv("RUNPOD_API_KEY"):sys.exit("RUNPOD_API_KEY not set")
 if A.cleanup:
@@ -70,8 +70,20 @@ try:
     env+=f"export MODE={A.mode}; "
     if A.start:env+=f"export CLIP_START={float(A.start)}; "
     if A.duration:env+=f"export CLIP_DUR={float(A.duration)}; "
-    subprocess.run(ssh+[f"{env}set -o pipefail; {{ bash /workspace/zh-dub/scripts/setup.sh && bash /workspace/zh-dub/scripts/run_job.sh {job} {q}; }} 2>&1 | tee {job}.log"],check=True,
-        timeout=max(60,A.max_hours*3600-(time.time()-START)))
+    left=lambda:max(60,A.max_hours*3600-(time.time()-START))
+    mt=A.mt or ("claude" if A.mode=="audio" else "hunyuan")
+    if mt=="claude" and not os.getenv("ANTHROPIC_API_KEY"):sys.exit("--mt claude needs ANTHROPIC_API_KEY on this host")
+    run=lambda st,log:subprocess.run(ssh+[f"{env}export STAGES={st}; set -o pipefail; {{ bash /workspace/zh-dub/scripts/setup.sh && bash /workspace/zh-dub/scripts/run_job.sh {job} {q}; }} 2>&1 | tee -a {job}.{log}.log"],check=True,timeout=left())
+    if mt=="hunyuan":run("123","job")
+    else:  # Claude translation runs HERE; the API key never goes to the pod
+        run("1","stage1")
+        loc=Path(A.out)/"_seg";loc.mkdir(parents=True,exist_ok=True)
+        g=subprocess.Popen(ssh+[f"cd {job} && tar -cf - */segments.json"],stdout=subprocess.PIPE);subprocess.run(["tar","-C",str(loc),"-xf","-"],stdin=g.stdout,check=True);g.wait()
+        t=time.time();subprocess.run([sys.executable,str(here/"pipeline/stage2_claude.py"),str(loc)],check=True,timeout=left())
+        print(f"claude_mt_s={time.time()-t:.0f}",flush=True)
+        t=subprocess.Popen(["tar","-C",str(loc),"-cf","-",*[str(p.relative_to(loc)) for p in loc.glob("*/segments.json")]],stdout=subprocess.PIPE)
+        subprocess.run(ssh+[f"tar --no-same-owner -C {job} -xf -"],stdin=t.stdout,check=True);t.wait()
+        run("3","stage3")
     print("job ok; outputs ->",A.out)
 finally:
     if "job" in dir():  # fetch outputs + logs even on failure
