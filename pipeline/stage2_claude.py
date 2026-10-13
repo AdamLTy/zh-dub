@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Stage 2 (Claude): style-B "播客自然风" faithful EN->ZH, ~40-segment chunks with surrounding context (±60 segs),
-JSON {id: zh} output validated (all ids, non-empty); missing ids retried once, then Hunyuan/blank fallback flagged.
+JSON {id: zh} output validated (all ids, non-empty); missing ids retried, then split into sub-chunks of 10/3/1, then Hunyuan/blank fallback flagged.
 Runs on the launcher host (needs ANTHROPIC_API_KEY); pod never sees the key. usage: stage2_claude.py JOBDIR [--model M]"""
 import json,os,re,sys,time,urllib.request
 from pathlib import Path
@@ -39,7 +39,11 @@ for f in sorted(Path(sys.argv[1]).glob("*/segments.json")):
     def chunk(c):
         ids=list(range(c,min(c+CH,len(S))));r=translate(S,ids)
         miss=[i for i in ids if not r.get(i)]
-        if miss:r.update(translate(S,miss))
+        for n in (len(miss),10,3,1):  # retry, then split into smaller sub-chunks
+            miss=[i for i in ids if not r.get(i)]
+            for k in range(0,len(miss),max(n,1)):
+                try:r.update(translate(S,miss[k:k+n]))
+                except Exception as e:print("retry fail",e,flush=True)
         return r
     import concurrent.futures as cf
     with cf.ThreadPoolExecutor(int(os.getenv("CLAUDE_PARALLEL","6"))) as ex:  # chunks are independent (context is read-only)
