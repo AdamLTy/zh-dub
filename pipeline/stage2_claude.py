@@ -13,7 +13,7 @@ def call(prompt):
     for a in range(4):
         try:
             r=urllib.request.Request("https://api.anthropic.com/v1/messages",json.dumps(b).encode(),
-              {"x-api-key":os.environ["ANTHROPIC_API_KEY"],"anthropic-version":"2023-06-01","content-type":"application/json"})
+              {"x-api-key":KEY,"anthropic-version":"2023-06-01","content-type":"application/json"})
             j=json.load(urllib.request.urlopen(r,timeout=600))
             return "".join(c.get("text","") for c in j["content"]),j.get("usage",{})
         except Exception as e:
@@ -23,6 +23,7 @@ def parse(t):
     m=re.search(r"\{.*\}",t,re.S)
     try:return {int(k):str(v).strip() for k,v in json.loads(m.group(0)).items()} if m else {}
     except Exception:return {}
+KEY=os.getenv("ZHDUB_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY")  # dedicated zh-dub key preferred
 USAGE={"input_tokens":0,"output_tokens":0,"calls":0}
 def translate(S,ids):
     lo,hi=max(0,ids[0]-CTX),min(len(S),ids[-1]+CTX+1)

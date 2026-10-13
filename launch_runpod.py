@@ -72,7 +72,7 @@ try:
     if A.duration:env+=f"export CLIP_DUR={float(A.duration)}; "
     left=lambda:max(60,A.max_hours*3600-(time.time()-START))
     mt=A.mt or ("claude" if A.mode=="audio" else "hunyuan")
-    if mt=="claude" and not os.getenv("ANTHROPIC_API_KEY"):sys.exit("--mt claude needs ANTHROPIC_API_KEY on this host")
+    if mt=="claude" and not (os.getenv("ZHDUB_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY")):sys.exit("--mt claude needs ZHDUB_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY) on this host")
     run=lambda st,log:subprocess.run(ssh+[f"{env}export STAGES={st}; set -o pipefail; {{ bash /workspace/zh-dub/scripts/setup.sh && bash /workspace/zh-dub/scripts/run_job.sh {job} {q}; }} 2>&1 | tee -a {job}.{log}.log"],check=True,timeout=left())
     if mt=="hunyuan":run("123","job")
     else:  # Claude translation runs HERE; the API key never goes to the pod
