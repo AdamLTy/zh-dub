@@ -12,9 +12,9 @@ V=$VOL/venvs; mkdir -p $V
 [ -x $V/vllm/bin/vllm ] || { uv venv -p 3.11 $V/vllm; VIRTUAL_ENV=$V/vllm uv pip install "vllm>=0.10"; }
 # 3) IndexTTS2
 [ -d $VOL/index-tts ] || git clone -q https://github.com/index-tts/index-tts.git $VOL/index-tts
-( cd $VOL/index-tts && [ -x .venv/bin/python ] || { UV_PROJECT_ENVIRONMENT=.venv uv sync --all-extras; } )
+( cd $VOL/index-tts && [ -x .venv/bin/python ] || { UV_PROJECT_ENVIRONMENT=.venv uv sync; } )
 $V/asr/bin/pip -q install huggingface_hub 2>/dev/null || VIRTUAL_ENV=$V/asr uv pip install huggingface_hub
-HF=$V/asr/bin/huggingface-cli
+HF=$V/asr/bin/hf
 [ -f $VOL/index-tts/checkpoints/gpt.pth ] || $HF download IndexTeam/IndexTTS-2 --local-dir $VOL/index-tts/checkpoints
 $HF download nvidia/parakeet-tdt-0.6b-v2 >/dev/null
 $HF download tencent/Hunyuan-MT-7B >/dev/null

@@ -16,9 +16,15 @@ if os.getenv("HF_TOKEN"):
         dia=Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",use_auth_token=os.environ["HF_TOKEN"]).to(torch.device("cuda"))
     except Exception as e:print("diarization disabled:",e)
 for url in urls:
-    vid=re.sub(r"\W","_",url)[-11:];d=out/vid;d.mkdir(parents=True,exist_ok=True)
+    vid=re.sub(r"\W","_",Path(url).stem if os.path.isfile(url) else url)[-16:];d=out/vid;d.mkdir(parents=True,exist_ok=True)
     if not (d/"src.mp4").exists():
-        sh("yt-dlp","-f","bv*[height<=1080]+ba/b","--merge-output-format","mp4","-o",str(d/"src.mp4"),url)
+        cs,cd=os.getenv("CLIP_START"),os.getenv("CLIP_DUR")
+        if os.path.isfile(url):  # local media (e.g. uploaded because YouTube blocks datacenter IPs)
+            cut=(["-ss",cs] if cs else [])+(["-t",cd] if cd else [])
+            sh("ffmpeg","-y",*cut,"-i",url,"-c","copy",str(d/"src.mp4"))
+        else:
+            sec=["--download-sections",f"*{cs or 0}-{float(cs or 0)+float(cd) if cd else 'inf'}","--force-keyframes-at-cuts"] if (cs or cd) else []
+            sh("yt-dlp","-f","bv*[height<=1080]+ba/b","--merge-output-format","mp4",*sec,"-o",str(d/"src.mp4"),url)
     sh("ffmpeg","-y","-i",str(d/"src.mp4"),"-ac","2","-ar","44100",str(d/"src44.wav"))
     # demucs: vocals vs everything else (music/ambience kept as bed)
     sh(sys.executable,"-m","demucs","--two-stems=vocals","-n","htdemucs","-o",str(d/"sep"),str(d/"src44.wav"))

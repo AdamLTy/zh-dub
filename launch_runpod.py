@@ -3,7 +3,9 @@
 Safety: never lists/stops other pods. Only acts on pod ids it created, recorded in .runpod_pods.json,
 and re-verifies the pod name (prefix zhdub-) before deleting.
 env: RUNPOD_API_KEY (required), HF_TOKEN (optional, diarization). SSH key ~/.ssh/id_ed25519(.pub).
-usage: python launch_runpod.py URL [URL...] [--out ./dub_out] [--community] [--keep]
+Caps: --max-hours (default 2) wall-clock incl. setup; pod terminated on timeout/failure.
+Inputs may be URLs or local media files (uploaded to the pod). --start/--duration clip (seconds).
+usage: python launch_runpod.py URL|FILE [...] [--start S] [--duration D] [--out ./dub_out] [--community] [--keep]
        python launch_runpod.py --cleanup   # terminate pods recorded in .runpod_pods.json (own pods only)"""
 import argparse,json,os,subprocess,sys,time,uuid,urllib.request
 from pathlib import Path
@@ -22,6 +24,7 @@ def terminate(pid):
     call("DELETE",f"/pods/{pid}");s.pop(pid);save(s);print("terminated own pod",pid)
 ap=argparse.ArgumentParser();ap.add_argument("urls",nargs="*");ap.add_argument("--out",default="./dub_out")
 ap.add_argument("--community",action="store_true");ap.add_argument("--keep",action="store_true");ap.add_argument("--cleanup",action="store_true")
+ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
 ap.add_argument("--image",default="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04");A=ap.parse_args()
 if not os.getenv("RUNPOD_API_KEY"):sys.exit("RUNPOD_API_KEY not set")
 if A.cleanup:
@@ -33,7 +36,7 @@ name=PREFIX+uuid.uuid4().hex[:8]
 body={"name":name,"imageName":A.image,"gpuTypeIds":["NVIDIA L40S"],"gpuCount":1,"cloudType":"COMMUNITY" if A.community else "SECURE",
       "containerDiskInGb":40,"volumeInGb":100,"volumeMountPath":"/workspace","ports":["22/tcp"],"supportPublicIp":True,
       "env":{"PUBLIC_KEY":pub}}  # no network volume: pod-local disk only, deleted with the pod
-pod=call("POST","/pods",body);pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
+START=time.time();pod=call("POST","/pods",body);pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
 print("created own pod",pid,name,"$/hr",pod.get("costPerHr"),flush=True)
 try:
     while True:
@@ -47,14 +50,24 @@ try:
         time.sleep(10)
     here=Path(__file__).resolve().parent
     subprocess.run(["rsync","-a","--exclude=.git","--exclude=.runpod_pods.json","-e",rsh,f"{here}/",f"root@{ip}:/workspace/zh-dub/"],check=True)
+    env=(f"export HF_TOKEN='{os.environ['HF_TOKEN']}'; " if os.getenv("HF_TOKEN") else "")
+    subprocess.run(ssh+["mkdir -p /workspace/media /workspace/jobs"],check=True);items=[]
+    for u in A.urls:
+        if os.path.isfile(u):
+            subprocess.run(["rsync","-a","-e",rsh,u,f"root@{ip}:/workspace/media/"],check=True,stdout=subprocess.DEVNULL)
+            items.append("/workspace/media/"+Path(u).name)
+        else:items.append(u)
     job="/workspace/jobs/"+time.strftime("%Y%m%d-%H%M%S")
-    q=" ".join("'"+u.replace("'","")+"'" for u in A.urls)
-    env=f"export HF_TOKEN='{os.environ['HF_TOKEN']}'; " if os.getenv("HF_TOKEN") else ""
-    subprocess.run(ssh+[f"{env}bash /workspace/zh-dub/scripts/setup.sh && bash /workspace/zh-dub/scripts/run_job.sh {job} {q}"],check=True)
-    Path(A.out).mkdir(parents=True,exist_ok=True)
-    subprocess.run(["rsync","-av","-e",rsh,"--include=*/",*[f"--include={x}" for x in
-        ("zh_dub.mp4","zh_dub.mp3","zh.srt","transcript.md","segments.json","timing.txt")],"--exclude=*",f"root@{ip}:{job}/",A.out],check=True)
-    print("outputs ->",A.out)
+    q=" ".join("'"+u.replace("'","")+"'" for u in items)
+    if A.start:env+=f"export CLIP_START={float(A.start)}; "
+    if A.duration:env+=f"export CLIP_DUR={float(A.duration)}; "
+    subprocess.run(ssh+[f"{env}set -o pipefail; {{ bash /workspace/zh-dub/scripts/setup.sh && bash /workspace/zh-dub/scripts/run_job.sh {job} {q}; }} 2>&1 | tee {job}.log"],check=True,
+        timeout=max(60,A.max_hours*3600-(time.time()-START)))
+    print("job ok; outputs ->",A.out)
 finally:
+    if "job" in dir():  # fetch outputs + logs even on failure
+        Path(A.out).mkdir(parents=True,exist_ok=True)
+        subprocess.run(["rsync","-av","-e",rsh,"--include=*/",*[f"--include={x}" for x in
+            ("zh_dub.mp4","zh_dub.mp3","zh.srt","transcript.md","segments.json","timing.txt","*.log")],"--exclude=*",f"root@{ip}:/workspace/jobs/",A.out])
     if not A.keep:terminate(pid)
     else:print("kept running:",pid,"-> later: python launch_runpod.py --cleanup")
