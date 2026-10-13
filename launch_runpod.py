@@ -27,6 +27,9 @@ def terminate(pid):
 ap=argparse.ArgumentParser();ap.add_argument("urls",nargs="*");ap.add_argument("--out",default="./dub_out")
 ap.add_argument("--community",action="store_true");ap.add_argument("--keep",action="store_true");ap.add_argument("--cleanup",action="store_true")
 ap.add_argument("--no-verify-speakers",action="store_true",help="skip Claude speaker-attribution check (on by default with --mt claude)");ap.add_argument("--mt",choices=["claude","hunyuan"]);ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--title",default="");ap.add_argument("--tts-workers",type=int,default=3);ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
+ap.add_argument("--segments",help="reuse a finished segments.json (transcript+speakers+zh): skips ASR/diarization, speaker check and MT; stage1 only redoes demucs+refs")
+ap.add_argument("--speaker-merge",help="speaker_merge.json to place in the job dir, e.g. {\"S2\":\"S1\"}")
+ap.add_argument("--partial",help="dir of previously saved seg*.wav/seg*.ref to upload so stage3 resumes")
 ap.add_argument("--image",default="ghcr.io/adamlty/zh-dub:latest",help="prebuilt image; use runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04 for from-scratch setup");A=ap.parse_args()
 if not os.getenv("RUNPOD_API_KEY"):sys.exit("RUNPOD_API_KEY not set")
 import shutil  # preflight BEFORE creating a pod: local tools + ssh key
@@ -49,7 +52,7 @@ try:
         p=call("GET",f"/pods/{pid}");ip,port=p.get("publicIp"),(p.get("portMappings") or {}).get("22")
         if ip and port:break
         time.sleep(10)
-    o=["-i",str(key),"-o","StrictHostKeyChecking=no","-o","ServerAliveInterval=30"]
+    o=["-i",str(key),"-o","StrictHostKeyChecking=no","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=6","-o","ConnectTimeout=20"]
     ssh=["ssh",*o,"-p",str(port),f"root@{ip}"];rsh=f"ssh {' '.join(o)} -p {port}"
     for _ in range(30):
         if subprocess.run(ssh+["true"],capture_output=True).returncode==0:break
@@ -78,8 +81,38 @@ try:
     left=lambda:max(60,A.max_hours*3600-(time.time()-START))
     mt=A.mt or ("claude" if A.mode=="audio" else "hunyuan")
     if mt=="claude" and not (os.getenv("ZHDUB_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY")):sys.exit("--mt claude needs ZHDUB_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY) on this host")
-    run=lambda st,log:subprocess.run(ssh+[f"{env}export STAGES={st}; set -o pipefail; {{ bash /workspace/zh-dub/scripts/setup.sh && bash /workspace/zh-dub/scripts/run_job.sh {job} {q}; }} 2>&1 | tee -a {job}.{log}.log"],check=True,timeout=left())
-    if mt=="hunyuan":run("123","job")
+    ABORT=Path(A.out)/"ABORT"  # touch this file to abort (outputs are still pulled first)
+    def rssh(cmd,tries=40,**kw):  # ssh with retries + backoff; a dropped connection is never fatal by itself
+        for n in range(tries):
+            r=subprocess.run(ssh+[cmd],capture_output=True,text=True,**kw)
+            if r.returncode!=255:return r
+            print(f"ssh unreachable ({n+1}/{tries}), retrying",flush=True);time.sleep(min(15*(n+1),120))
+        return r
+    def run(st,log):  # detached on the pod (setsid nohup) with an rc marker; poll until done/failed/cap/abort
+        rc=f"{job}.{log}.rc";cmd=f"{env}export STAGES={st}; bash /workspace/zh-dub/scripts/setup.sh && bash /workspace/zh-dub/scripts/run_job.sh {job} {q}"
+        rssh(f"rm -f {rc}; setsid nohup bash -c {shlex.quote(cmd+'; echo $? > '+rc)} >> {job}.{log}.log 2>&1 < /dev/null & echo started",tries=10)
+        last=""
+        while True:
+            if time.time()-START>A.max_hours*3600:raise SystemExit("hard time cap reached")
+            if ABORT.exists():raise SystemExit("ABORT file present")
+            r=rssh(f"cat {rc} 2>/dev/null; echo ---; tail -n 2 {job}.{log}.log | tr '\\r' '\\n' | tail -n 1")
+            if r.returncode==0:
+                code,_,tail=r.stdout.partition("---")
+                if tail.strip()!=last:last=tail.strip();print(time.strftime("%H:%M"),last[:160],flush=True)
+                if code.strip():
+                    if code.strip()!="0":raise SystemExit(f"stage {st} failed rc={code.strip()}")
+                    return
+            time.sleep(60)
+    if A.segments:  # rerun with a finished segments.json: no ASR / Claude
+        import tempfile;stg=Path(tempfile.mkdtemp())
+        import re;vid=re.sub(r"\W","_",Path(A.urls[0]).stem if os.path.isfile(A.urls[0]) else A.urls[0])[-16:]
+        (stg/vid).mkdir();shutil.copy(A.segments,stg/vid/"segments.json")
+        if A.speaker_merge:shutil.copy(A.speaker_merge,stg/vid/"speaker_merge.json")
+        if A.partial:
+            for f in Path(A.partial).glob("seg*.*"):
+                if f.suffix in(".wav",".ref") and ".raw" not in f.name and ".tmp" not in f.name:shutil.copy(f,stg/vid/f.name)
+        put(stg,[vid],job);env+="export KEEP_SEGMENTS=1; ";run("13","job")
+    elif mt=="hunyuan":run("123","job")
     else:  # Claude translation runs HERE; the API key never goes to the pod
         run("1","stage1")
         loc=Path(A.out)/"_seg";loc.mkdir(parents=True,exist_ok=True)
@@ -94,10 +127,13 @@ try:
         run("3","stage3")
     print("job ok; outputs ->",A.out)
 finally:
-    if "job" in dir():  # fetch outputs + logs even on failure
+    if "job" in dir():  # ALWAYS pull outputs + partial work (seg wavs, refs, logs) before any terminate; retried
         Path(A.out).mkdir(parents=True,exist_ok=True)
-        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","*.mp3","*.srt","*.lrc","*.vtt","transcript.md","segments.json","speaker_fixes.json","timing.txt"))+" -name '*.log'"
-        g=subprocess.Popen(ssh+[f"cd /workspace/jobs && find . -type f \\( {pats} \\) -print0 | tar --null -T - -cf -"],stdout=subprocess.PIPE)
-        subprocess.run(["tar","-C",A.out,"-xvf","-"],stdin=g.stdout);g.wait()
+        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","*.mp3","*.srt","*.lrc","*.vtt","transcript.md","segments.json","speaker_fixes.json","speaker_merge.json","timing.txt","seg[0-9]*[0-9].wav","seg*.ref","ref*.wav","*.rc"))+" -name '*.log'"
+        for n in range(8):
+            g=subprocess.Popen(ssh+[f"cd /workspace/jobs && find . -type f \\( {pats} \\) -print0 | tar --null -T - -cf -"],stdout=subprocess.PIPE)
+            x=subprocess.run(["tar","-C",A.out,"-xf","-"],stdin=g.stdout);g.wait()
+            if g.returncode==0 and x.returncode==0:print("fetched outputs ->",A.out,flush=True);break
+            print(f"fetch failed ({n+1}/8), retrying",flush=True);time.sleep(30*(n+1))
     if not A.keep:terminate(pid)
     else:print("kept running:",pid,"-> later: python launch_runpod.py --cleanup")

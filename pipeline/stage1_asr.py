@@ -6,20 +6,21 @@ from pathlib import Path
 out=Path(sys.argv[1]);urls=sys.argv[2:]
 def sh(*c):subprocess.run(c,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 import torch,soundfile as sf
-import nemo.collections.asr as nemo_asr
-asr=nemo_asr.models.ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v2").cuda().eval()
-asr.change_attention_model("rel_pos_local_attn",[256,256]);asr.change_subsampling_conv_chunking_factor(1)  # long-form (hours)
-dia=None
-if os.getenv("HF_TOKEN"):
-    try:
-        from pyannote.audio import Pipeline
-        dia=Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",use_auth_token=os.environ["HF_TOKEN"]).to(torch.device("cuda"))
-    except Exception as e:print("pyannote unavailable:",e)
-sfm=None
-if dia is None:  # ungated fallback: NVIDIA Streaming Sortformer (up to 4 speakers, long-form)
-    from nemo.collections.asr.models import SortformerEncLabelModel
-    sfm=SortformerEncLabelModel.from_pretrained("nvidia/diar_streaming_sortformer_4spk-v2").cuda().eval()
-    M=sfm.sortformer_modules;M.chunk_len,M.chunk_right_context,M.fifo_len,M.spkcache_update_period=340,40,40,300
+KEEP=os.getenv("KEEP_SEGMENTS")=="1"  # rerun: keep uploaded <job>/<vid>/segments.json (transcript, speakers, zh); only redo demucs + refs
+asr=dia=sfm=None
+if not KEEP:
+  import nemo.collections.asr as nemo_asr
+  asr=nemo_asr.models.ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v2").cuda().eval()
+  asr.change_attention_model("rel_pos_local_attn",[256,256]);asr.change_subsampling_conv_chunking_factor(1)  # long-form (hours)
+  if os.getenv("HF_TOKEN"):
+      try:
+          from pyannote.audio import Pipeline
+          dia=Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",use_auth_token=os.environ["HF_TOKEN"]).to(torch.device("cuda"))
+      except Exception as e:print("pyannote unavailable:",e)
+  if dia is None:  # ungated fallback: NVIDIA Streaming Sortformer (up to 4 speakers, long-form)
+      from nemo.collections.asr.models import SortformerEncLabelModel
+      sfm=SortformerEncLabelModel.from_pretrained("nvidia/diar_streaming_sortformer_4spk-v2").cuda().eval()
+      M=sfm.sortformer_modules;M.chunk_len,M.chunk_right_context,M.fifo_len,M.spkcache_update_period=340,40,40,300
 for url in urls:
     vid=re.sub(r"\W","_",Path(url).stem if os.path.isfile(url) else url)[-16:];d=out/vid;d.mkdir(parents=True,exist_ok=True)
     if not (d/"src.mp4").exists():
@@ -35,19 +36,23 @@ for url in urls:
     sh(sys.executable,"-m","demucs","--two-stems=vocals","-n","htdemucs","-o",str(d/"sep"),str(d/"src44.wav"))
     sep=d/"sep/htdemucs/src44";(sep/"no_vocals.wav").replace(d/"bgm.wav");(sep/"vocals.wav").replace(d/"vocals.wav")
     sh("ffmpeg","-y","-i",str(d/"vocals.wav"),"-ac","1","-ar","16000",str(d/"vocals16.wav"))
-    with torch.inference_mode():
+    if KEEP and (d/"segments.json").exists():
+        J0=json.loads((d/"segments.json").read_text());segs=J0["segments"];turns=None
+    else:
+      J0={}
+      with torch.inference_mode():
         h=asr.transcribe([str(d/"vocals16.wav")],timestamps=True,batch_size=1)[0]
-    segs=[{"start":s["start"],"end":s["end"],"en":s["segment"].strip()} for s in h.timestamp["segment"] if s["segment"].strip()]
-    # speaker per segment: max overlap with diarization turns
-    turns=[]
-    if sfm is not None:
-        with torch.inference_mode():
-            turns=[(float(a),float(b),k.replace("speaker_","S")) for a,b,k in (x.split() for x in sfm.diarize(audio=[str(d/"vocals16.wav")],batch_size=1)[0])]
-    elif dia:
-        turns=[(t.start,t.end,spk) for t,_,spk in dia(str(d/"vocals16.wav")).itertracks(yield_label=True)]
-    for s in segs:
-        ov={};[ov.__setitem__(k,ov.get(k,0)+max(0,min(e,s["end"])-max(b,s["start"]))) for b,e,k in turns]
-        s["spk"]=max(ov,key=ov.get) if ov and max(ov.values())>0 else "S0"
+      segs=[{"start":s["start"],"end":s["end"],"en":s["segment"].strip()} for s in h.timestamp["segment"] if s["segment"].strip()]
+      # speaker per segment: max overlap with diarization turns
+      turns=[]
+      if sfm is not None:
+          with torch.inference_mode():
+              turns=[(float(a),float(b),k.replace("speaker_","S")) for a,b,k in (x.split() for x in sfm.diarize(audio=[str(d/"vocals16.wav")],batch_size=1)[0])]
+      elif dia:
+          turns=[(t.start,t.end,spk) for t,_,spk in dia(str(d/"vocals16.wav")).itertracks(yield_label=True)]
+      for s in segs:
+          ov={};[ov.__setitem__(k,ov.get(k,0)+max(0,min(e,s["end"])-max(b,s["start"]))) for b,e,k in turns]
+          s["spk"]=max(ov,key=ov.get) if ov and max(ov.values())>0 else "S0"
     # reference clip per speaker: concat their longest clean segments up to ~12s (IndexTTS2 prompt)
     refs={}
     for spk in {s["spk"] for s in segs}:
@@ -61,5 +66,6 @@ for url in urls:
         refs[spk]=str(f)
     dur=sf.info(str(d/"src44.wav")).duration
     vdur=float(subprocess.check_output(["ffprobe","-v","0","-show_entries","format=duration","-of","csv=p=0",str(d/"src.mp4")]))
-    (d/"segments.json").write_text(json.dumps({"url":url,"duration":dur,"video_duration":vdur,"title":os.getenv("TITLE",""),"refs":refs,"segments":segs},ensure_ascii=False,indent=1))
+    J0.update({"url":url,"duration":dur,"video_duration":vdur,"title":os.getenv("TITLE","") or J0.get("title",""),"refs":refs,"segments":segs})
+    (d/"segments.json").write_text(json.dumps(J0,ensure_ascii=False,indent=1))
     print("stage1",vid,len(segs),"segs",len(refs),"speakers",flush=True)
