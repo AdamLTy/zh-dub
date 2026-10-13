@@ -51,7 +51,8 @@ for n in range(int(os.getenv("ZHDUB_CREATE_TRIES","40"))):  # capacity can be mo
     except SystemExit as e:
         if "no instances" not in str(e):raise
         print(time.strftime("%H:%M"),"no L40S capacity, retrying in 60s",flush=True);time.sleep(60)
-else:sys.exit("no capacity after retries");pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
+else:sys.exit("no capacity after retries")
+pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
 print("created own pod",pid,name,"$/hr",pod.get("costPerHr"),flush=True)
 try:
     while True:
