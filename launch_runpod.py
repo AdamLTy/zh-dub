@@ -29,6 +29,10 @@ ap.add_argument("--community",action="store_true");ap.add_argument("--keep",acti
 ap.add_argument("--no-verify-speakers",action="store_true",help="skip Claude speaker-attribution check (on by default with --mt claude)");ap.add_argument("--mt",choices=["claude","hunyuan"]);ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
 ap.add_argument("--image",default="ghcr.io/adamlty/zh-dub:latest",help="prebuilt image; use runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04 for from-scratch setup");A=ap.parse_args()
 if not os.getenv("RUNPOD_API_KEY"):sys.exit("RUNPOD_API_KEY not set")
+import shutil  # preflight BEFORE creating a pod: local tools + ssh key
+miss=[b for b in ("ssh","tar") if not shutil.which(b)]
+if miss:sys.exit(f"missing local tools: {miss} (e.g. apt-get install openssh-client tar)")
+if not (Path.home()/".ssh/id_ed25519.pub").exists():sys.exit("missing ~/.ssh/id_ed25519(.pub): ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519")
 if A.cleanup:
     for pid in list(state()):terminate(pid)
     sys.exit()
@@ -67,7 +71,7 @@ try:
         else:items.append(u)
     job="/workspace/jobs/"+time.strftime("%Y%m%d-%H%M%S")
     q=" ".join("'"+u.replace("'","")+"'" for u in items)
-    env+=f"export MODE={A.mode}; "+("export APP=/opt/zhdub; " if "zh-dub" in A.image else "")+("export NEED_LLM=1; " if (A.mt=="hunyuan" or A.mode=="video") else "")
+    env+=f"export MODE={A.mode}; "+("export APP=/opt/zhdub; " if "zh-dub" in A.image else "")+("" if (A.mt=="hunyuan" or A.mode=="video") else "export WITH_VLLM=0; ")+("export NEED_LLM=1; " if (A.mt=="hunyuan" or A.mode=="video") else "")
     if A.start:env+=f"export CLIP_START={float(A.start)}; "
     if A.duration:env+=f"export CLIP_DUR={float(A.duration)}; "
     left=lambda:max(60,A.max_hours*3600-(time.time()-START))
