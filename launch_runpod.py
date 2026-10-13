@@ -45,7 +45,13 @@ name=PREFIX+uuid.uuid4().hex[:8]
 body={"name":name,"imageName":A.image,"gpuTypeIds":["NVIDIA L40S"],"allowedCudaVersions":os.getenv("ZHDUB_CUDA","13.0").split(","),"gpuCount":1,"cloudType":"COMMUNITY" if A.community else "SECURE",
       "containerDiskInGb":60,"volumeInGb":80,"volumeMountPath":"/workspace","ports":["22/tcp"],"supportPublicIp":True,
       "env":{"PUBLIC_KEY":pub}}  # no network volume: pod-local disk only, deleted with the pod
-START=time.time();pod=call("POST","/pods",body);pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
+START=time.time()
+for n in range(int(os.getenv("ZHDUB_CREATE_TRIES","40"))):  # capacity can be momentarily empty: retry creation (no pod exists yet)
+    try:pod=call("POST","/pods",body);break
+    except SystemExit as e:
+        if "no instances" not in str(e):raise
+        print(time.strftime("%H:%M"),"no L40S capacity, retrying in 60s",flush=True);time.sleep(60)
+else:sys.exit("no capacity after retries");pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
 print("created own pod",pid,name,"$/hr",pod.get("costPerHr"),flush=True)
 try:
     while True:
