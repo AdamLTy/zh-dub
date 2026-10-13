@@ -14,7 +14,12 @@ if os.getenv("HF_TOKEN"):
     try:
         from pyannote.audio import Pipeline
         dia=Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",use_auth_token=os.environ["HF_TOKEN"]).to(torch.device("cuda"))
-    except Exception as e:print("diarization disabled:",e)
+    except Exception as e:print("pyannote unavailable:",e)
+sfm=None
+if dia is None:  # ungated fallback: NVIDIA Streaming Sortformer (up to 4 speakers, long-form)
+    from nemo.collections.asr.models import SortformerEncLabelModel
+    sfm=SortformerEncLabelModel.from_pretrained("nvidia/diar_streaming_sortformer_4spk-v2").cuda().eval()
+    M=sfm.sortformer_modules;M.chunk_len,M.chunk_right_context,M.fifo_len,M.spkcache_update_period=340,40,40,300
 for url in urls:
     vid=re.sub(r"\W","_",Path(url).stem if os.path.isfile(url) else url)[-16:];d=out/vid;d.mkdir(parents=True,exist_ok=True)
     if not (d/"src.mp4").exists():
@@ -35,7 +40,10 @@ for url in urls:
     segs=[{"start":s["start"],"end":s["end"],"en":s["segment"].strip()} for s in h.timestamp["segment"] if s["segment"].strip()]
     # speaker per segment: max overlap with diarization turns
     turns=[]
-    if dia:
+    if sfm is not None:
+        with torch.inference_mode():
+            turns=[(float(a),float(b),k.replace("speaker_","S")) for a,b,k in (x.split() for x in sfm.diarize(audio=[str(d/"vocals16.wav")],batch_size=1)[0])]
+    elif dia:
         turns=[(t.start,t.end,spk) for t,_,spk in dia(str(d/"vocals16.wav")).itertracks(yield_label=True)]
     for s in segs:
         ov={};[ov.__setitem__(k,ov.get(k,0)+max(0,min(e,s["end"])-max(b,s["start"]))) for b,e,k in turns]

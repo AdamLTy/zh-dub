@@ -7,13 +7,15 @@ Caps: --max-hours (default 2) wall-clock incl. setup; pod terminated on timeout/
 Inputs may be URLs or local media files (uploaded to the pod). --start/--duration clip (seconds).
 usage: python launch_runpod.py URL|FILE [...] [--start S] [--duration D] [--out ./dub_out] [--community] [--keep]
        python launch_runpod.py --cleanup   # terminate pods recorded in .runpod_pods.json (own pods only)"""
-import argparse,json,os,subprocess,sys,time,uuid,urllib.request
+import urllib.error,argparse,json,os,subprocess,sys,time,uuid,urllib.request
 from pathlib import Path
 API="https://rest.runpod.io/v1";PREFIX="zhdub-";STATE=Path(__file__).resolve().parent/".runpod_pods.json"
 def call(m,p,body=None):
     r=urllib.request.Request(API+p,data=json.dumps(body).encode() if body is not None else None,method=m,
-        headers={"Authorization":"Bearer "+os.environ["RUNPOD_API_KEY"],"Content-Type":"application/json"})
-    with urllib.request.urlopen(r,timeout=60) as x:t=x.read();return json.loads(t) if t else {}
+        headers={"Authorization":"Bearer "+os.environ["RUNPOD_API_KEY"],"Content-Type":"application/json","User-Agent":"zh-dub-launcher/0.1"})
+    try:
+        with urllib.request.urlopen(r,timeout=60) as x:t=x.read();return json.loads(t) if t else {}
+    except urllib.error.HTTPError as e:raise SystemExit(f"Runpod API {m} {p} -> {e.code}: {e.read()[:500].decode(errors='replace')}")
 def state():return json.loads(STATE.read_text()) if STATE.exists() else {}
 def save(s):STATE.write_text(json.dumps(s,indent=1))
 def terminate(pid):
@@ -49,12 +51,15 @@ try:
         if subprocess.run(ssh+["true"],capture_output=True).returncode==0:break
         time.sleep(10)
     here=Path(__file__).resolve().parent
-    subprocess.run(["rsync","-a","--exclude=.git","--exclude=.runpod_pods.json","-e",rsh,f"{here}/",f"root@{ip}:/workspace/zh-dub/"],check=True)
+    def put(src_dir,names,dst):  # tar over ssh (no rsync needed on either side)
+        t=subprocess.Popen(["tar","-C",str(src_dir),"-cf","-",*names],stdout=subprocess.PIPE)
+        subprocess.run(ssh+[f"mkdir -p {dst} && tar -C {dst} -xf -"],stdin=t.stdout,check=True);t.wait()
+    put(here,[x.name for x in here.iterdir() if x.name not in(".git",".runpod_pods.json","__pycache__")],"/workspace/zh-dub")
     env=(f"export HF_TOKEN='{os.environ['HF_TOKEN']}'; " if os.getenv("HF_TOKEN") else "")
     subprocess.run(ssh+["mkdir -p /workspace/media /workspace/jobs"],check=True);items=[]
     for u in A.urls:
         if os.path.isfile(u):
-            subprocess.run(["rsync","-a","-e",rsh,u,f"root@{ip}:/workspace/media/"],check=True,stdout=subprocess.DEVNULL)
+            put(Path(u).resolve().parent,[Path(u).name],"/workspace/media")
             items.append("/workspace/media/"+Path(u).name)
         else:items.append(u)
     job="/workspace/jobs/"+time.strftime("%Y%m%d-%H%M%S")
@@ -67,7 +72,8 @@ try:
 finally:
     if "job" in dir():  # fetch outputs + logs even on failure
         Path(A.out).mkdir(parents=True,exist_ok=True)
-        subprocess.run(["rsync","-av","-e",rsh,"--include=*/",*[f"--include={x}" for x in
-            ("zh_dub.mp4","zh_dub.mp3","zh.srt","transcript.md","segments.json","timing.txt","*.log")],"--exclude=*",f"root@{ip}:/workspace/jobs/",A.out])
+        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","zh.srt","transcript.md","segments.json","timing.txt"))+" -name '*.log'"
+        g=subprocess.Popen(ssh+[f"cd /workspace/jobs && find . -type f \\( {pats} \\) -print0 | tar --null -T - -cf -"],stdout=subprocess.PIPE)
+        subprocess.run(["tar","-C",A.out,"-xvf","-"],stdin=g.stdout);g.wait()
     if not A.keep:terminate(pid)
     else:print("kept running:",pid,"-> later: python launch_runpod.py --cleanup")
