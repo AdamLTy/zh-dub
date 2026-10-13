@@ -27,7 +27,7 @@ def terminate(pid):
 ap=argparse.ArgumentParser();ap.add_argument("urls",nargs="*");ap.add_argument("--out",default="./dub_out")
 ap.add_argument("--community",action="store_true");ap.add_argument("--keep",action="store_true");ap.add_argument("--cleanup",action="store_true")
 ap.add_argument("--mt",choices=["claude","hunyuan"]);ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
-ap.add_argument("--image",default="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04");A=ap.parse_args()
+ap.add_argument("--image",default="ghcr.io/adamlty/zh-dub:latest",help="prebuilt image; use runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04 for from-scratch setup");A=ap.parse_args()
 if not os.getenv("RUNPOD_API_KEY"):sys.exit("RUNPOD_API_KEY not set")
 if A.cleanup:
     for pid in list(state()):terminate(pid)
@@ -36,7 +36,7 @@ if not A.urls:sys.exit("give at least one URL")
 key=Path.home()/".ssh/id_ed25519";pub=key.with_suffix(".pub").read_text().strip()
 name=PREFIX+uuid.uuid4().hex[:8]
 body={"name":name,"imageName":A.image,"gpuTypeIds":["NVIDIA L40S"],"gpuCount":1,"cloudType":"COMMUNITY" if A.community else "SECURE",
-      "containerDiskInGb":80,"volumeInGb":150,"volumeMountPath":"/workspace","ports":["22/tcp"],"supportPublicIp":True,
+      "containerDiskInGb":60,"volumeInGb":80,"volumeMountPath":"/workspace","ports":["22/tcp"],"supportPublicIp":True,
       "env":{"PUBLIC_KEY":pub}}  # no network volume: pod-local disk only, deleted with the pod
 START=time.time();pod=call("POST","/pods",body);pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
 print("created own pod",pid,name,"$/hr",pod.get("costPerHr"),flush=True)
@@ -67,7 +67,7 @@ try:
         else:items.append(u)
     job="/workspace/jobs/"+time.strftime("%Y%m%d-%H%M%S")
     q=" ".join("'"+u.replace("'","")+"'" for u in items)
-    env+=f"export MODE={A.mode}; "
+    env+=f"export MODE={A.mode}; "+("export APP=/opt/zhdub; " if "zh-dub" in A.image else "")+("export NEED_LLM=1; " if (A.mt=="hunyuan" or A.mode=="video") else "")
     if A.start:env+=f"export CLIP_START={float(A.start)}; "
     if A.duration:env+=f"export CLIP_DUR={float(A.duration)}; "
     left=lambda:max(60,A.max_hours*3600-(time.time()-START))

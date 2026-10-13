@@ -4,7 +4,7 @@ concatenated with natural pauses (original gap clamped; extra pause on speaker c
 timestamps for the NEW audio: zh.lrc, zh.srt, zh.vtt (+ bilingual *.bi.* variants)."""
 import json,os,subprocess,sys
 from pathlib import Path
-VOL=os.environ["VOL"];root=Path(sys.argv[1])
+VOL=os.environ.get("APP") or os.environ["VOL"];root=Path(sys.argv[1])
 sys.path.insert(0,f"{VOL}/index-tts")
 import numpy as np,soundfile as sf
 from indextts.infer_v2 import IndexTTS2

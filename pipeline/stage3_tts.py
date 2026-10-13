@@ -4,7 +4,7 @@ Duration control: public IndexTTS2 code has no duration arg, so we scale the s2m
 (mel frames, pitch-preserving) to the original slot; residual >5% fixed with gentle atempo (<=1.25x)."""
 import json,os,subprocess,sys
 from pathlib import Path
-VOL=os.environ["VOL"];root=Path(sys.argv[1])
+VOL=os.environ.get("APP") or os.environ["VOL"];root=Path(sys.argv[1])
 sys.path.insert(0,f"{VOL}/index-tts")
 import soundfile as sf
 from indextts.infer_v2 import IndexTTS2
