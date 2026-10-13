@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.runpod_pods.json
+dub_out/
+jobs/
+out/
+*.wav
+*.mp3
+*.mp4
+.env

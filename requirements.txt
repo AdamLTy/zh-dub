@@ -1,0 +1,5 @@
+# Local launcher: Python stdlib only (>=3.9) + ssh + rsync.
+# Pod-side deps are installed by scripts/setup.sh into isolated venvs:
+#   asr : nemo_toolkit[asr]>=2.3, demucs, pyannote.audio>=3.3, yt-dlp, soundfile, huggingface_hub
+#   mt  : vllm>=0.10  (serves tencent/Hunyuan-MT-7B)
+#   tts : index-tts (uv sync --all-extras) + IndexTeam/IndexTTS-2 weights
