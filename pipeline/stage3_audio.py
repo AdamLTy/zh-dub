@@ -32,6 +32,13 @@ if len(sys.argv)>3 and sys.argv[2]=="--worker":   # worker: synthesize segments 
 for jf in sorted(root.glob("*/segments.json")):
     d=jf.parent;J=json.loads(jf.read_text());S=J["segments"];chunks=[];t=0.0
     J["title"]=J.get("title") or os.getenv("TITLE") or d.name;base=safe(J["title"])
+    mf=d/"speaker_merge.json"   # optional {"S2":"S1"}: diarization split of one voice -> merge before refs/TTS
+    if mf.exists():
+        M=json.loads(mf.read_text());n=0
+        for s in S:
+            if s["spk"] in M:s.setdefault("spk_diar",s["spk"]);s["spk"]=M[s["spk"]];n+=1
+        for k in M:J["refs"].pop(k,None)
+        J["speaker_merge"]={"map":M,"segments":n};print("speaker_merge",J["speaker_merge"],flush=True)
     if J.get("speaker_fixes") and (d/"vocals.wav").exists():
         # re-extract each speaker's clone reference from corrected, confident segments only (skip changed/uncertain, >=1.5s)
         for spk in sorted({s["spk"] for s in S}):
