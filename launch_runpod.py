@@ -26,7 +26,7 @@ def terminate(pid):
     call("DELETE",f"/pods/{pid}");s.pop(pid);save(s);print("terminated own pod",pid)
 ap=argparse.ArgumentParser();ap.add_argument("urls",nargs="*");ap.add_argument("--out",default="./dub_out")
 ap.add_argument("--community",action="store_true");ap.add_argument("--keep",action="store_true");ap.add_argument("--cleanup",action="store_true")
-ap.add_argument("--mt",choices=["claude","hunyuan"]);ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
+ap.add_argument("--no-verify-speakers",action="store_true",help="skip Claude speaker-attribution check (on by default with --mt claude)");ap.add_argument("--mt",choices=["claude","hunyuan"]);ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
 ap.add_argument("--image",default="ghcr.io/adamlty/zh-dub:latest",help="prebuilt image; use runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04 for from-scratch setup");A=ap.parse_args()
 if not os.getenv("RUNPOD_API_KEY"):sys.exit("RUNPOD_API_KEY not set")
 if A.cleanup:
@@ -79,6 +79,9 @@ try:
         run("1","stage1")
         loc=Path(A.out)/"_seg";loc.mkdir(parents=True,exist_ok=True)
         g=subprocess.Popen(ssh+[f"cd {job} && tar -cf - */segments.json"],stdout=subprocess.PIPE);subprocess.run(["tar","-C",str(loc),"-xf","-"],stdin=g.stdout,check=True);g.wait()
+        if not A.no_verify_speakers:
+            t=time.time();subprocess.run([sys.executable,str(here/"pipeline/stage1b_speakers.py"),str(loc)],check=True,timeout=left())
+            print(f"claude_speakers_s={time.time()-t:.0f}",flush=True)
         t=time.time();subprocess.run([sys.executable,str(here/"pipeline/stage2_claude.py"),str(loc)],check=True,timeout=left())
         print(f"claude_mt_s={time.time()-t:.0f}",flush=True)
         t=subprocess.Popen(["tar","-C",str(loc),"-cf","-",*[str(p.relative_to(loc)) for p in loc.glob("*/segments.json")]],stdout=subprocess.PIPE)
@@ -88,7 +91,7 @@ try:
 finally:
     if "job" in dir():  # fetch outputs + logs even on failure
         Path(A.out).mkdir(parents=True,exist_ok=True)
-        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","zh_audio.mp3","zh*.srt","zh*.lrc","zh*.vtt","transcript.md","segments.json","timing.txt"))+" -name '*.log'"
+        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","zh_audio.mp3","zh*.srt","zh*.lrc","zh*.vtt","transcript.md","segments.json","speaker_fixes.json","timing.txt"))+" -name '*.log'"
         g=subprocess.Popen(ssh+[f"cd /workspace/jobs && find . -type f \\( {pats} \\) -print0 | tar --null -T - -cf -"],stdout=subprocess.PIPE)
         subprocess.run(["tar","-C",A.out,"-xvf","-"],stdin=g.stdout);g.wait()
     if not A.keep:terminate(pid)

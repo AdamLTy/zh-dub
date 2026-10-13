@@ -37,6 +37,10 @@ for jf in sorted(root.glob("*/segments.json")):
         (d/f"zh{sfx}.lrc").write_text("\n".join(lrc)+"\n",encoding="utf-8")
         (d/f"zh{sfx}.srt").write_text("\n".join(f"{i+1}\n{t_srt(s['zh_start'])} --> {t_srt(s['zh_end'])}\n{txt(s)}\n" for i,s in enumerate(S)),encoding="utf-8")
         (d/f"zh{sfx}.vtt").write_text("WEBVTT\n\n"+"\n".join(f"{t_srt(s['zh_start'],'.')} --> {t_srt(s['zh_end'],'.')}\n{txt(s)}\n" for s in S),encoding="utf-8")
-    (d/"transcript.md").write_text("# 中文稿\n\n"+"\n".join(f"- **[{t_srt(s['zh_start'])[:8]}] {s['spk']}** {s['zh']}  \n  <sub>{s['en']}</sub>" for s in S),encoding="utf-8")
+    F=J.get("speaker_fixes");fx=""
+    if F:
+        fx=f"\n\n## 说话人校正（Claude）\n提议 {F['proposed']} 处，采纳 {F['applied']} 处（置信度 ≥ {F['threshold']}）\n"+"".join(
+            f"\n- #{x['seg_id']} {x['old_spk']}→{x['new_spk']} ({x.get('confidence')}){' ✅' if x.get('applied') else ' ✗ 未采纳'}：{x['en'][:80]} — {x.get('reason','')}" for x in F["items"])
+    (d/"transcript.md").write_text("# 中文稿\n\n"+"\n".join(f"- **[{t_srt(s['zh_start'])[:8]}] {s['spk']}** {s['zh']}  \n  <sub>{s['en']}</sub>" for s in S)+fx,encoding="utf-8")
     J["zh_audio_duration"]=round(t,2);os.remove(d/"zh_audio.wav")
     jf.write_text(json.dumps(J,ensure_ascii=False,indent=1));print("stage3_audio",d.name,f"{t:.0f}s vs source {J['duration']:.0f}s",flush=True)
