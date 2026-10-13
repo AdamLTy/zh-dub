@@ -11,5 +11,6 @@ T0=$(date +%s)
 [[ $MODE == video && $STAGES == *2* ]] && { llm Qwen/Qwen3-8B; python3 $P/stage2b_fit.py "$OUT"; }; T3=$(date +%s)  # duration-budget rewrite only for lip-sync video
 pkill -f "[v]llm serve" || true; sleep 5
 [[ $STAGES == *3* ]] || exit 0
+export PATH=$APP/index-tts/.venv/bin:$PATH  # ninja for BigVGAN CUDA kernel
 if [ "$MODE" = video ]; then $APP/index-tts/.venv/bin/python $P/stage3_tts.py "$OUT"; else $APP/index-tts/.venv/bin/python $P/stage3_audio.py "$OUT"; fi; T4=$(date +%s)
 echo "mode=$MODE timing_s asr=$((T1-T0)) mt=$((T2-T1)) fit=$((T3-T2)) tts_mux=$((T4-T3)) total=$((T4-T0))" | tee $OUT/timing.txt
