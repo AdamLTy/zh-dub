@@ -26,7 +26,7 @@ def terminate(pid):
     call("DELETE",f"/pods/{pid}");s.pop(pid);save(s);print("terminated own pod",pid)
 ap=argparse.ArgumentParser();ap.add_argument("urls",nargs="*");ap.add_argument("--out",default="./dub_out")
 ap.add_argument("--community",action="store_true");ap.add_argument("--keep",action="store_true");ap.add_argument("--cleanup",action="store_true")
-ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
+ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
 ap.add_argument("--image",default="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04");A=ap.parse_args()
 if not os.getenv("RUNPOD_API_KEY"):sys.exit("RUNPOD_API_KEY not set")
 if A.cleanup:
@@ -67,6 +67,7 @@ try:
         else:items.append(u)
     job="/workspace/jobs/"+time.strftime("%Y%m%d-%H%M%S")
     q=" ".join("'"+u.replace("'","")+"'" for u in items)
+    env+=f"export MODE={A.mode}; "
     if A.start:env+=f"export CLIP_START={float(A.start)}; "
     if A.duration:env+=f"export CLIP_DUR={float(A.duration)}; "
     subprocess.run(ssh+[f"{env}set -o pipefail; {{ bash /workspace/zh-dub/scripts/setup.sh && bash /workspace/zh-dub/scripts/run_job.sh {job} {q}; }} 2>&1 | tee {job}.log"],check=True,
@@ -75,7 +76,7 @@ try:
 finally:
     if "job" in dir():  # fetch outputs + logs even on failure
         Path(A.out).mkdir(parents=True,exist_ok=True)
-        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","zh.srt","transcript.md","segments.json","timing.txt"))+" -name '*.log'"
+        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","zh_audio.mp3","zh*.srt","zh*.lrc","zh*.vtt","transcript.md","segments.json","timing.txt"))+" -name '*.log'"
         g=subprocess.Popen(ssh+[f"cd /workspace/jobs && find . -type f \\( {pats} \\) -print0 | tar --null -T - -cf -"],stdout=subprocess.PIPE)
         subprocess.run(["tar","-C",A.out,"-xvf","-"],stdin=g.stdout);g.wait()
     if not A.keep:terminate(pid)

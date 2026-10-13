@@ -28,6 +28,12 @@ python launch_runpod.py "https://www.youtube.com/watch?v=..." --out ./dub_out
 
 ---
 
+## 模式 / Modes
+- `--mode audio`（默认）：自然语速中文音频 `zh_audio.mp3`（每位说话人克隆音色，不变速、不删改译文，按原对话顺序加自然停顿），以及按**新音频**时间轴生成的 `zh.lrc` / `zh.srt` / `zh.vtt`（`*.bi.*` 为中英双语）。
+- `--mode video`：对口型配音视频（含 Qwen3 时长预算改写和逐句变速贴合）。
+
+播放 mp3 + lrc 滚动字幕：iPhone 可用 Glaze / Mosic / MusicKeep / Offbeat，Android 可用 Musicolet / Poweramp / Muse，Mac 可用 LyricsX 或 VLC（加载 .srt）。
+
 **English** · YouTube URL in → Chinese-dubbed mp4 (background kept, speaker voice cloned), mp3, SRT and bilingual transcript out.
 
 Pipeline: yt-dlp → Demucs → Parakeet TDT 0.6B v2 (timestamps) → optional pyannote diarization → Hunyuan-MT-7B on vLLM → IndexTTS2 voice cloning with per-sentence duration fitting → ffmpeg mix & mux.
