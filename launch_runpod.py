@@ -55,7 +55,10 @@ try:
         t=subprocess.Popen(["tar","-C",str(src_dir),"-cf","-",*names],stdout=subprocess.PIPE)
         subprocess.run(ssh+[f"mkdir -p {dst} && tar -C {dst} -xf -"],stdin=t.stdout,check=True);t.wait()
     put(here,[x.name for x in here.iterdir() if x.name not in(".git",".runpod_pods.json","__pycache__")],"/workspace/zh-dub")
-    env=(f"export HF_TOKEN='{os.environ['HF_TOKEN']}'; " if os.getenv("HF_TOKEN") else "")
+    env=""
+    if os.getenv("HF_TOKEN"):  # send via stdin to a 600 file; never on a command line or in logs
+        subprocess.run(ssh+["umask 077; cat > /root/.hf_token"],input=os.environ["HF_TOKEN"].encode(),check=True)
+        env="export HF_TOKEN=$(cat /root/.hf_token); "
     subprocess.run(ssh+["mkdir -p /workspace/media /workspace/jobs"],check=True);items=[]
     for u in A.urls:
         if os.path.isfile(u):

@@ -9,7 +9,7 @@ V=$VOL/venvs; mkdir -p $V
 # 1) ASR + separation + diarization (NeMo)
 [ -x $V/asr/bin/python ] || { uv venv -p 3.11 $V/asr; VIRTUAL_ENV=$V/asr uv pip install "nemo_toolkit[asr]>=2.3" demucs "pyannote.audio>=3.3" yt-dlp soundfile; }
 # 2) vLLM for Hunyuan-MT-7B
-[ -x $V/vllm/bin/vllm ] || { uv venv -p 3.11 $V/vllm; VIRTUAL_ENV=$V/vllm uv pip install "vllm>=0.10"; }
+[ -x $V/vllm/bin/vllm ] || { uv venv -p 3.11 $V/vllm; VIRTUAL_ENV=$V/vllm uv pip install "vllm>=0.10" ninja; }
 # 3) IndexTTS2
 [ -d $VOL/index-tts ] || git clone -q https://github.com/index-tts/index-tts.git $VOL/index-tts
 ( cd $VOL/index-tts && [ -x .venv/bin/python ] || { UV_PROJECT_ENVIRONMENT=.venv uv sync; } )

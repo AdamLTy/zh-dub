@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Stage 2: EN->ZH via resident vLLM Hunyuan-MT-7B, all segments concurrently, prev sentence as context."""
+"""Stage 2: EN->ZH via resident vLLM Hunyuan-MT-7B, all segments concurrently."""
 import json,sys,concurrent.futures as cf,urllib.request
 from pathlib import Path
 URL="http://localhost:8000/v1/chat/completions"
 def mt(text,ctx):
-    p=("Translate the following segment into Chinese, without additional explanation.\n\n"+text) if not ctx else \
-      (f"{ctx}\n参考上面的信息，把下面的文本翻译成中文，注意不需要翻译上文，也不要额外解释：\n{text}")
+    # context prompt leaked previous sentence into output in testing -> translate each segment standalone
+    p="Translate the following segment into Chinese, without additional explanation.\n\n"+text
     body={"model":"mt","messages":[{"role":"user","content":p}],"temperature":0.7,"top_p":0.6,"top_k":20,"repetition_penalty":1.05,"max_tokens":512}
     r=urllib.request.urlopen(urllib.request.Request(URL,json.dumps(body).encode(),{"Content-Type":"application/json"}),timeout=300)
     return json.load(r)["choices"][0]["message"]["content"].strip()
