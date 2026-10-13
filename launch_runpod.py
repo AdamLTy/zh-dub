@@ -53,7 +53,7 @@ try:
     here=Path(__file__).resolve().parent
     def put(src_dir,names,dst):  # tar over ssh (no rsync needed on either side)
         t=subprocess.Popen(["tar","-C",str(src_dir),"-cf","-",*names],stdout=subprocess.PIPE)
-        subprocess.run(ssh+[f"mkdir -p {dst} && tar -C {dst} -xf -"],stdin=t.stdout,check=True);t.wait()
+        subprocess.run(ssh+[f"mkdir -p {dst} && tar --no-same-owner -C {dst} -xf -"],stdin=t.stdout,check=True);t.wait()
     put(here,[x.name for x in here.iterdir() if x.name not in(".git",".runpod_pods.json","__pycache__")],"/workspace/zh-dub")
     env=""
     if os.getenv("HF_TOKEN"):  # send via stdin to a 600 file; never on a command line or in logs
