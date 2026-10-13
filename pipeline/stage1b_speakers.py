@@ -19,7 +19,7 @@ def call(p):
             time.sleep(5*(a+1))
 for f in sorted(Path(sys.argv[1]).glob("*/segments.json")):
     J=json.loads(f.read_text());S=J["segments"];spks=sorted({s["spk"] for s in S});props={}
-    for c in range(0,len(S),CH-OV):
+    def ask(c):
         ids=range(c,min(c+CH,len(S)))
         tx="\n".join(f"{i}|{S[i]['start']:.1f}-{S[i]['end']:.1f}|{S[i]['spk']}| {S[i]['en']}" for i in ids)
         p=("Below is an automatically diarized podcast/interview transcript (format: id|start-end seconds|speaker|text). "
@@ -29,8 +29,11 @@ for f in sorted(Path(sys.argv[1]).glob("*/segments.json")):
            "Return only JSON: a list of objects {\"seg_id\":int,\"old_spk\":str,\"new_spk\":str,\"confidence\":0-1,\"reason\":str}. "
            "Return [] if everything looks right.\n\n"+tx)
         t=call(p);m=re.search(r"\[.*\]",t,re.S)
-        try:L=json.loads(m.group(0)) if m else []
-        except Exception:L=[]
+        try:return ids,(json.loads(m.group(0)) if m else [])
+        except Exception:return ids,[]
+    import concurrent.futures as cf
+    with cf.ThreadPoolExecutor(int(os.getenv("CLAUDE_PARALLEL","6"))) as ex:R=list(ex.map(ask,range(0,len(S),CH-OV)))
+    for ids,L in R:
         for x in L:
             try:i=int(x["seg_id"])
             except Exception:continue

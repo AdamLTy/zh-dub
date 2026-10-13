@@ -36,11 +36,14 @@ def translate(S,ids):
     return parse(t)
 for f in sorted(Path(sys.argv[1]).glob("*/segments.json")):
     J=json.loads(f.read_text());S=J["segments"];out={}
-    for c in range(0,len(S),CH):
+    def chunk(c):
         ids=list(range(c,min(c+CH,len(S))));r=translate(S,ids)
         miss=[i for i in ids if not r.get(i)]
         if miss:r.update(translate(S,miss))
-        out.update(r)
+        return r
+    import concurrent.futures as cf
+    with cf.ThreadPoolExecutor(int(os.getenv("CLAUDE_PARALLEL","6"))) as ex:  # chunks are independent (context is read-only)
+        for r in ex.map(chunk,range(0,len(S),CH)):out.update(r)
     bad=0
     for i,s in enumerate(S):
         if out.get(i):s["zh"]=out[i];s["mt"]="claude"
