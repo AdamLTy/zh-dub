@@ -36,7 +36,7 @@ if not A.urls:sys.exit("give at least one URL")
 key=Path.home()/".ssh/id_ed25519";pub=key.with_suffix(".pub").read_text().strip()
 name=PREFIX+uuid.uuid4().hex[:8]
 body={"name":name,"imageName":A.image,"gpuTypeIds":["NVIDIA L40S"],"gpuCount":1,"cloudType":"COMMUNITY" if A.community else "SECURE",
-      "containerDiskInGb":40,"volumeInGb":100,"volumeMountPath":"/workspace","ports":["22/tcp"],"supportPublicIp":True,
+      "containerDiskInGb":80,"volumeInGb":150,"volumeMountPath":"/workspace","ports":["22/tcp"],"supportPublicIp":True,
       "env":{"PUBLIC_KEY":pub}}  # no network volume: pod-local disk only, deleted with the pod
 START=time.time();pod=call("POST","/pods",body);pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
 print("created own pod",pid,name,"$/hr",pod.get("costPerHr"),flush=True)

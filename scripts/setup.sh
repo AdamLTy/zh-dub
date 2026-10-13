@@ -2,7 +2,7 @@
 # Fresh GPU env setup: clone IndexTTS + download all weights from HuggingFace. Idempotent; local disk only (VOL, default /workspace).
 set -euo pipefail
 VOL=${VOL:-/workspace}; export VOL
-export HF_HOME=$VOL/hf UV_CACHE_DIR=$VOL/uv-cache
+export HF_HOME=$VOL/hf UV_CACHE_DIR=/root/.cache/uv  # keep caches off the volume (quota)
 apt-get update -qq && apt-get install -y -qq ffmpeg git git-lfs fonts-noto-cjk >/dev/null
 command -v uv >/dev/null || pip install -q uv
 V=$VOL/venvs; mkdir -p $V
@@ -20,3 +20,4 @@ $HF download nvidia/parakeet-tdt-0.6b-v2 >/dev/null
 $HF download tencent/Hunyuan-MT-7B >/dev/null
 $HF download Qwen/Qwen3-8B >/dev/null
 echo "setup ok (VOL=$VOL)"
+uv cache clean >/dev/null 2>&1 || true
