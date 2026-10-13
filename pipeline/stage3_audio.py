@@ -17,9 +17,24 @@ def t_srt(s,sep=","):h,m=divmod(s,3600);m,s=divmod(m,60);return f"{int(h):02}:{i
 def t_lrc(s):m,s=divmod(s,60);return f"[{int(m):02}:{s:05.2f}]"
 for jf in sorted(root.glob("*/segments.json")):
     d=jf.parent;J=json.loads(jf.read_text());S=J["segments"];chunks=[];t=0.0
+    if J.get("speaker_fixes") and (d/"vocals.wav").exists():
+        # re-extract each speaker's clone reference from corrected, confident segments only (skip changed/uncertain, >=1.5s)
+        for spk in sorted({s["spk"] for s in S}):
+            good=sorted([s for s in S if s["spk"]==spk and not s.get("spk_uncertain") and "spk_diar" not in s and s["end"]-s["start"]>=1.5],
+                        key=lambda s:s["end"]-s["start"],reverse=True)
+            pick,tot=[],0
+            for s in good:
+                if tot>=12:break
+                pick.append(s);tot+=s["end"]-s["start"]
+            if not pick:continue
+            sel="+".join(f"between(t,{s['start']:.2f},{s['end']:.2f})" for s in pick);rf=d/f"ref2_{spk}.wav"
+            sh("ffmpeg","-y","-i",str(d/"vocals.wav"),"-af",f"aselect='{sel}',asetpts=N/SR/TB","-t","15","-ac","1","-ar","24000",str(rf))
+            J["refs"][spk]=str(rf)
+        J["refs_source"]="corrected+confident segments"
     for i,s in enumerate(S):
         raw=str(d/f"seg{i:05}.raw.wav");f=str(d/f"seg{i:05}.wav")
-        tts.infer(spk_audio_prompt=J["refs"][s["spk"]],text=s["zh"],output_path=raw,verbose=False,interval_silence=150)
+        s["tts_ref"]=J["refs"][s["spk"]]
+        tts.infer(spk_audio_prompt=s["tts_ref"],text=s["zh"],output_path=raw,verbose=False,interval_silence=150)
         sh("ffmpeg","-y","-i",raw,"-af",TRIM,"-ar",str(SR),"-ac","1",f);a,_=sf.read(f,dtype="float32")
         if i:
             gap=S[i]["start"]-S[i-1]["end"];pause=min(max(gap,0.25),1.2)+(0.35 if s["spk"]!=S[i-1]["spk"] else 0)
@@ -42,5 +57,9 @@ for jf in sorted(root.glob("*/segments.json")):
         fx=f"\n\n## 说话人校正（Claude）\n提议 {F['proposed']} 处，采纳 {F['applied']} 处（置信度 ≥ {F['threshold']}）\n"+"".join(
             f"\n- #{x['seg_id']} {x['old_spk']}→{x['new_spk']} ({x.get('confidence')}){' ✅' if x.get('applied') else ' ✗ 未采纳'}：{x['en'][:80]} — {x.get('reason','')}" for x in F["items"])
     (d/"transcript.md").write_text("# 中文稿\n\n"+"\n".join(f"- **[{t_srt(s['zh_start'])[:8]}] {s['spk']}** {s['zh']}  \n  <sub>{s['en']}</sub>" for s in S)+fx,encoding="utf-8")
+    # consistency check: every segment synthesized with the reference of its final (corrected) speaker label
+    bad=[i for i,s in enumerate(S) if s.get("tts_ref")!=J["refs"][s["spk"]] or f"_{s['spk']}.wav" not in s["tts_ref"]]
+    J["consistency"]={"segments":len(S),"mismatched":bad,"ok":not bad};print("consistency",J["consistency"],flush=True)
+    if bad:raise SystemExit(f"speaker/voice mismatch in segments {bad}")
     J["zh_audio_duration"]=round(t,2);os.remove(d/"zh_audio.wav")
     jf.write_text(json.dumps(J,ensure_ascii=False,indent=1));print("stage3_audio",d.name,f"{t:.0f}s vs source {J['duration']:.0f}s",flush=True)
