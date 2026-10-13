@@ -46,28 +46,48 @@ body={"name":name,"imageName":A.image,"gpuTypeIds":["NVIDIA L40S"],"allowedCudaV
       "containerDiskInGb":60,"volumeInGb":80,"volumeMountPath":"/workspace","ports":["22/tcp"],"supportPublicIp":True,
       "env":{"PUBLIC_KEY":pub}}  # no network volume: pod-local disk only, deleted with the pod
 START=time.time()
-for n in range(int(os.getenv("ZHDUB_CREATE_TRIES","40"))):  # capacity can be momentarily empty: retry creation (no pod exists yet)
-    try:pod=call("POST","/pods",body);break
-    except SystemExit as e:
-        if "no instances" not in str(e):raise
-        print(time.strftime("%H:%M"),"no L40S capacity, retrying in 60s",flush=True);time.sleep(60)
-else:sys.exit("no capacity after retries")
-pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
-print("created own pod",pid,name,"$/hr",pod.get("costPerHr"),flush=True)
-try:
-    while True:
+o=["-i",str(key),"-o","StrictHostKeyChecking=no","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=6","-o","ConnectTimeout=20"]
+def new_pod():
+    name=PREFIX+uuid.uuid4().hex[:8];body["name"]=name
+    for n in range(int(os.getenv("ZHDUB_CREATE_TRIES","40"))):  # capacity can be momentarily empty: retry creation (no pod exists yet)
+        try:pod=call("POST","/pods",body);break
+        except SystemExit as e:
+            if "no instances" not in str(e):raise
+            print(time.strftime("%H:%M"),"no L40S capacity, retrying in 60s",flush=True);time.sleep(60)
+    else:sys.exit("no capacity after retries")
+    pid=pod["id"];s=state();s[pid]={"name":name,"created":time.time()};save(s)
+    print("created own pod",pid,name,"$/hr",pod.get("costPerHr"),flush=True);return pid
+def wait_ssh(pid,limit=float(os.getenv("ZHDUB_SSH_WAIT","600"))):  # RUNNING + `echo ok` over ssh, with backoff
+    t0=time.time()
+    while time.time()-t0<limit:
         p=call("GET",f"/pods/{pid}");ip,port=p.get("publicIp"),(p.get("portMappings") or {}).get("22")
         if ip and port:break
         time.sleep(10)
-    o=["-i",str(key),"-o","StrictHostKeyChecking=no","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=6","-o","ConnectTimeout=20"]
+    else:return None
+    ssh=["ssh",*o,"-p",str(port),f"root@{ip}"];d=5
+    while time.time()-t0<limit:
+        r=subprocess.run(ssh+["echo ok"],capture_output=True,text=True,timeout=60)
+        if r.returncode==0 and "ok" in r.stdout:print("ssh ready after",int(time.time()-t0),"s",flush=True);return ip,port
+        time.sleep(d);d=min(d*2,40)
+    return None
+for attempt in range(1,4):
+    pid=new_pod()
+    try:got=wait_ssh(pid)
+    except Exception as e:print("ssh wait error",e,flush=True);got=None
+    if got:break
+    print(f"ssh never ready on {pid} (attempt {attempt}/3); terminating it",flush=True);terminate(pid)
+else:sys.exit("ssh never became ready on 3 fresh pods")
+ip,port=got
+try:
     ssh=["ssh",*o,"-p",str(port),f"root@{ip}"];rsh=f"ssh {' '.join(o)} -p {port}"
-    for _ in range(30):
-        if subprocess.run(ssh+["true"],capture_output=True).returncode==0:break
-        time.sleep(10)
     here=Path(__file__).resolve().parent
     def put(src_dir,names,dst):  # tar over ssh (no rsync needed on either side)
-        t=subprocess.Popen(["tar","-C",str(src_dir),"-cf","-",*names],stdout=subprocess.PIPE)
-        subprocess.run(ssh+[f"mkdir -p {dst} && tar --no-same-owner -C {dst} -xf -"],stdin=t.stdout,check=True);t.wait()
+        for n in range(4):  # retry uploads on transient ssh failure
+            t=subprocess.Popen(["tar","-C",str(src_dir),"-cf","-",*names],stdout=subprocess.PIPE)
+            r=subprocess.run(ssh+[f"mkdir -p {dst} && tar --no-same-owner -C {dst} -xf -"],stdin=t.stdout);t.wait()
+            if r.returncode==0:return
+            print(f"upload failed rc={r.returncode} ({n+1}/4), retrying",flush=True);time.sleep(20*(n+1))
+        raise SystemExit("upload failed after retries")
     put(here,[x.name for x in here.iterdir() if x.name not in(".git",".runpod_pods.json","__pycache__")],"/workspace/zh-dub")
     env=""
     if os.getenv("HF_TOKEN"):  # send via stdin to a 600 file; never on a command line or in logs
