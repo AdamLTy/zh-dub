@@ -61,5 +61,5 @@ for url in urls:
         refs[spk]=str(f)
     dur=sf.info(str(d/"src44.wav")).duration
     vdur=float(subprocess.check_output(["ffprobe","-v","0","-show_entries","format=duration","-of","csv=p=0",str(d/"src.mp4")]))
-    (d/"segments.json").write_text(json.dumps({"url":url,"duration":dur,"video_duration":vdur,"refs":refs,"segments":segs},ensure_ascii=False,indent=1))
+    (d/"segments.json").write_text(json.dumps({"url":url,"duration":dur,"video_duration":vdur,"title":os.getenv("TITLE",""),"refs":refs,"segments":segs},ensure_ascii=False,indent=1))
     print("stage1",vid,len(segs),"segs",len(refs),"speakers",flush=True)

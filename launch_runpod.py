@@ -26,7 +26,7 @@ def terminate(pid):
     call("DELETE",f"/pods/{pid}");s.pop(pid);save(s);print("terminated own pod",pid)
 ap=argparse.ArgumentParser();ap.add_argument("urls",nargs="*");ap.add_argument("--out",default="./dub_out")
 ap.add_argument("--community",action="store_true");ap.add_argument("--keep",action="store_true");ap.add_argument("--cleanup",action="store_true")
-ap.add_argument("--no-verify-speakers",action="store_true",help="skip Claude speaker-attribution check (on by default with --mt claude)");ap.add_argument("--mt",choices=["claude","hunyuan"]);ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
+ap.add_argument("--no-verify-speakers",action="store_true",help="skip Claude speaker-attribution check (on by default with --mt claude)");ap.add_argument("--mt",choices=["claude","hunyuan"]);ap.add_argument("--mode",choices=["audio","video"],default="audio");ap.add_argument("--title",default="");ap.add_argument("--tts-workers",type=int,default=3);ap.add_argument("--start");ap.add_argument("--duration");ap.add_argument("--max-hours",type=float,default=2.0)
 ap.add_argument("--image",default="ghcr.io/adamlty/zh-dub:latest",help="prebuilt image; use runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04 for from-scratch setup");A=ap.parse_args()
 if not os.getenv("RUNPOD_API_KEY"):sys.exit("RUNPOD_API_KEY not set")
 import shutil  # preflight BEFORE creating a pod: local tools + ssh key
@@ -71,6 +71,7 @@ try:
         else:items.append(u)
     job="/workspace/jobs/"+time.strftime("%Y%m%d-%H%M%S")
     q=" ".join("'"+u.replace("'","")+"'" for u in items)
+    import shlex;env+=f"export TITLE={shlex.quote(A.title)} TTS_WORKERS={A.tts_workers}; "
     env+=f"export MODE={A.mode}; "+("export APP=/opt/zhdub; " if "zh-dub" in A.image else "")+("" if (A.mt=="hunyuan" or A.mode=="video") else "export WITH_VLLM=0; ")+("export NEED_LLM=1; " if (A.mt=="hunyuan" or A.mode=="video") else "")
     if A.start:env+=f"export CLIP_START={float(A.start)}; "
     if A.duration:env+=f"export CLIP_DUR={float(A.duration)}; "
@@ -95,7 +96,7 @@ try:
 finally:
     if "job" in dir():  # fetch outputs + logs even on failure
         Path(A.out).mkdir(parents=True,exist_ok=True)
-        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","zh_audio.mp3","zh*.srt","zh*.lrc","zh*.vtt","transcript.md","segments.json","speaker_fixes.json","timing.txt"))+" -name '*.log'"
+        pats=" ".join(f"-name '{x}' -o" for x in ("zh_dub.mp4","zh_dub.mp3","*.mp3","*.srt","*.lrc","*.vtt","transcript.md","segments.json","speaker_fixes.json","timing.txt"))+" -name '*.log'"
         g=subprocess.Popen(ssh+[f"cd /workspace/jobs && find . -type f \\( {pats} \\) -print0 | tar --null -T - -cf -"],stdout=subprocess.PIPE)
         subprocess.run(["tar","-C",A.out,"-xvf","-"],stdin=g.stdout);g.wait()
     if not A.keep:terminate(pid)
